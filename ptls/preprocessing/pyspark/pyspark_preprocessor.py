@@ -1,5 +1,5 @@
 import logging
-from typing import List, Dict, Union
+from typing import List, Dict, Union, Tuple
 
 import numpy as np
 import pandas as pd
@@ -12,6 +12,7 @@ from ptls.preprocessing.base.transformation.col_category_transformer import ColC
 from ptls.preprocessing.base.transformation.col_numerical_transformer import ColTransformer
 from ptls.preprocessing.pyspark.category_identity_encoder import CategoryIdentityEncoder
 from ptls.preprocessing.pyspark.col_identity_transformer import ColIdentityEncoder
+from ptls.preprocessing.pyspark.discretizer import ColNumericDiscretizer
 from ptls.preprocessing.pyspark.event_time import DatetimeToTimestamp
 from ptls.preprocessing.pyspark.frequency_encoder import FrequencyEncoder
 from ptls.preprocessing.pyspark.user_group_transformer import UserGroupTransformer
@@ -48,6 +49,7 @@ class PysparkDataPreprocessor(DataPreprocessor):
         cols_category: List[Union[str, ColCategoryTransformer]] = None,
         category_transformation: str = "frequency",
         cols_numerical: List[str] = None,
+        cols_discretize: Dict[str, Tuple[str, int]] = None,
         cols_identity: List[str] = None,
         cols_last_item: List[str] = None,
         max_trx_count: int = None,
@@ -58,6 +60,8 @@ class PysparkDataPreprocessor(DataPreprocessor):
             cols_category = []
         if cols_numerical is None:
             cols_numerical = []
+        if cols_discretize is None:
+            cols_discretize = dict()
         if cols_identity is None:
             cols_identity = []
         if cols_last_item is None:
@@ -101,15 +105,38 @@ class PysparkDataPreprocessor(DataPreprocessor):
                     f'`category_transformation` = "{category_transformation}"'
                 )
 
+        for col, disc_params in cols_discretize.items():
+            col_name_target = f'{col}_cat'
+            if category_transformation == "frequency":
+                sub_ct_category = FrequencyEncoder(col_name_original=col_name_target, max_cat_num=disc_params[1])
+            elif category_transformation == "none":
+                sub_ct_category = CategoryIdentityEncoder(col_name_original=col_name_target)
+            else:
+                raise AttributeError(
+                    f"incorrect category_transformation: "
+                    f'`category_transformation` = "{category_transformation}"'
+                )
+            cts_category.append(
+                ColNumericDiscretizer(
+                    col_name_original=col,
+                    col_name_target=col_name_target,
+                    is_drop_original_col = (col not in cols_numerical),
+                    discr_type=disc_params[0],
+                    n_bins=disc_params[1],
+                    categorical_transformation=sub_ct_category
+                )
+            )
+        
         cts_numerical = [
             ColIdentityEncoder(col_name_original=col) for col in cols_numerical
         ]
+
         t_user_group = UserGroupTransformer(
             col_name_original=col_id,
             cols_last_item=cols_last_item,
             max_trx_count=max_trx_count,
         )
-
+        
         super().__init__(
             col_id=col_id,
             col_event_time=ct_event_time,

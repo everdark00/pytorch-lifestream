@@ -15,6 +15,10 @@ from pyspark.sql import SparkSession
 from pyspark.sql import Window
 from pyspark.sql import DataFrame  # For typing
 
+from pyspark.ml.feature import QuantileDiscretizer
+from pyspark.ml.feature import VectorAssembler
+from pyspark.ml.clustering import KMeans
+
 
 logger = logging.getLogger(__name__)
 
@@ -69,6 +73,11 @@ class DatasetConverter:
                                    'and are numbered according to the order. ' \
                                    'The most common value will be replaced with 1, ' \
                                    'second common value will be replaced with 2 etc.')
+        parser.add_argument('--cols_discretize', nargs='*', default=[],
+                            help = 'List of columns to apply discretization to. '\
+                                   'In current version "kmeans" and "quantile" discretization types are supported. '\
+                                   'Columns for discritization must be passed in following format: '\
+                                   '<column_name>:<discretization type>#<discretization frequency>')
         parser.add_argument('--cols_log_norm', nargs='*', default=[],
                             help='List of columns to apply log transformation to. ' \
                                  'Log transformation is applied as signum(x) * log(|x| + 1)')
@@ -279,8 +288,37 @@ class DatasetConverter:
         logger.info(f'Join with "{path}" done. New {col_counter} columns joined')
         return df
 
+    def discretize_col(self, df, col_name, discretization_type, n_bins):
+        if discretization_type == 'quantile':
+            from pdb import set_trace
+            print(df.printSchema())
+            discretizer = QuantileDiscretizer(
+                numBuckets=n_bins,
+                inputCol=col_name,
+                outputCol=f'{col_name}_cat',
+                handleInvalid="skip"
+            )
+
+            df = discretizer.fit(df).transform(df)
+            df = df.withColumn(col_name, f'{col_name}_cat' + 1).drop(f'{col_name}_cat')
+        elif discretization_type == 'kmeans':
+            va = VectorAssembler(inputCols=[col_name], outputCol=col_name)
+            df = va.transform(df)
+            discretizer = KMeans(
+                k=n_bins, 
+                featuresCol=col_name, 
+                predictionCol=f'{col_name}_cat',
+                seed=42,                 
+            )
+
+            df = discretizer.fit(df).transform(df)
+            df = df.withColumn(col_name, f'{col_name}_cat' + 1).drop(f'{col_name}_cat')
+        else:
+            raise NotImplementedError(f'Unknown type of discretization: "{discretization_type}"')
+        return df
+
     def trx_to_features(self, df_data, print_dataset_info: bool,
-                        col_client_id, cols_event_time, cols_category, cols_log_norm, max_trx_count: int):
+                        col_client_id, cols_event_time, cols_category, cols_discretize, cols_log_norm, max_trx_count: int):
         if print_dataset_info:
             unique_clients = df_data.select(col_client_id).distinct().count()
             logger.info(f'Found {unique_clients} unique clients')
@@ -289,6 +327,13 @@ class DatasetConverter:
             df_data = self.log_transform(df_data, col)
             if print_dataset_info:
                 logger.info(f'Encoder stat for "{col}":\ncodes | trx_count\n{self.pd_hist(df_data, col)}')
+
+        for col in cols_discretize:
+            n_bins = int(col.split('#')[-1])
+            discretization_type = col.split('#')[0].split(':')[-1]
+            col = col.split(':')[0]
+            df_data = self.discretize_col(df_data, col, discretization_type, n_bins)
+#            cols_category.append(col)
 
         encoders = {col: self.get_encoder(df_data, col) for col in cols_category}
         for col in cols_category:
@@ -421,6 +466,7 @@ class DatasetConverter:
             col_client_id=self.config.col_client_id,
             cols_event_time=self.config.cols_event_time,
             cols_category=self.config.cols_category,
+            cols_discretize=self.config.cols_discretize,
             cols_log_norm=self.config.cols_log_norm,
             max_trx_count=self.config.max_trx_count,
         )

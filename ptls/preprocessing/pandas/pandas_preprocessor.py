@@ -1,5 +1,5 @@
 import logging
-from typing import List, Union
+from typing import List, Union, Dict, Tuple
 
 import numpy as np
 import pandas as pd
@@ -7,6 +7,9 @@ import pandas as pd
 from ptls.preprocessing.base.data_preprocessor import DataPreprocessor
 from ptls.preprocessing.base.transformation.col_category_transformer import ColCategoryTransformer
 from ptls.preprocessing.base.transformation.col_numerical_transformer import ColTransformer
+from ptls.preprocessing.pandas.pandas_transformation.category_identity_encoder import CategoryIdentityEncoder
+from ptls.preprocessing.pandas.pandas_transformation.pandas_freq_transformer import FrequencyEncoder
+from ptls.preprocessing.pandas.pandas_transformation.discretizer import ColNumericDiscretizer
 
 logger = logging.getLogger(__name__)
 
@@ -68,6 +71,7 @@ class PandasDataPreprocessor(DataPreprocessor):
         cols_category: List[Union[str, ColCategoryTransformer]] = None,
         category_transformation: str = "frequency",
         cols_numerical: List[str] = None,
+        cols_discretize: Dict[str, Tuple[str, int]] = None,
         cols_identity: List[str] = None,
         cols_first_item: List[str] = None,
         return_records: bool = True,
@@ -78,10 +82,58 @@ class PandasDataPreprocessor(DataPreprocessor):
         self.cols_first_item = cols_first_item
         self.event_time_transformation = event_time_transformation
         self.n_jobs = n_jobs
+
+        if cols_discretize is None:
+            cols_discretize = dict()
+        if cols_category is None:
+            cols_category = []
+        if cols_numerical is None:
+            cols_numerical = []
+        if cols_identity is None:
+            cols_identity = []
+
+        cts_category = []
+        for col in cols_category:
+            if not isinstance(col, str):
+                cts_category.append(col)  # use as is
+            elif category_transformation == "frequency":
+                cts_category.append(FrequencyEncoder(col_name_original=col))
+            elif category_transformation == "none":
+                cts_category.append(CategoryIdentityEncoder(col_name_original=col))
+            else:
+                raise AttributeError(
+                    f"incorrect category parameters combination: "
+                    f'`cols_category[i]` = "{col}" '
+                    f'`category_transformation` = "{category_transformation}"'
+                )
+
+        for col, disc_params in cols_discretize.items():
+            col_name_target = f'{col}_cat'
+            if self.category_transformation == "frequency":
+                sub_ct_category = FrequencyEncoder(col_name_original=col_name_target)
+            elif self.category_transformation == "none":
+                sub_ct_category = CategoryIdentityEncoder(col_name_original=col_name_target)
+            else:
+                raise AttributeError(
+                    f"incorrect category_transformation: "
+                    f'`category_transformation` = "{self.category_transformation}"'
+                )
+            drop_numeric_col = (col not in cols_numerical) and (col not in cols_identity)
+            cts_category.append(
+                ColNumericDiscretizer(
+                    col_name_original=col,
+                    col_name_target=col_name_target,
+                    is_drop_original_col = drop_numeric_col,
+                    discr_type=disc_params[0],
+                    n_bins=disc_params[1],
+                    categorical_transformation=sub_ct_category
+                )
+            )
+
         super().__init__(
             col_id=col_id,
             col_event_time=col_event_time,
-            cols_category=cols_category,
+            cols_category=cts_category,
             cols_identity=cols_identity,
             cols_numerical=cols_numerical,
             n_jobs=n_jobs,

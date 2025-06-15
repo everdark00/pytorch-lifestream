@@ -141,6 +141,15 @@ class DataPreprocessor(BaseEstimator, TransformerMixin):
                 )
                 col_dict.update({key: value})
                 self.unitary_func.update({func_name.col_name_original: func_name})
+            elif func_name.__repr__() == "Num2Cat transformation":
+                key = (
+                    func_name.col_name_target
+                )
+                value = (
+                    dataset[func_name.col_name_original]
+                )
+                col_dict.update({key: value})
+                self.unitary_func.update({func_name.col_name_target: func_name})
             else:
                 self.aggregate_func.update({func_name.col_name_original: func_name})
         return col_dict
