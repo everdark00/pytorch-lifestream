@@ -7,6 +7,7 @@ from random import Random
 
 import numpy as np
 import pandas as pd
+from sklearn.preprocessing import KBinsDiscretizer
 
 from ptls.preprocessing.util import pd_hist
 
@@ -24,6 +25,7 @@ def parse_args(args=None):
     parser.add_argument('--col_client_id', type=str)
     parser.add_argument('--cols_event_time', nargs='+')
     parser.add_argument('--cols_category', nargs='*', default=[])
+    parser.add_argument('--cols_discretize', nargs='*', default=[])
     parser.add_argument('--cols_log_norm', nargs='*', default=[])
     parser.add_argument('--col_target', required=False, type=str)
     parser.add_argument('--test_size', type=float, default=0.1)
@@ -51,6 +53,17 @@ def load_source_data(data_path, trx_files):
     logger.info(f'Loaded {len(data)} rows in total')
     return data
 
+def discretize_col(df_data, col, discretization_type, n_bins, drop_original_col):
+        discretizer = KBinsDiscretizer(
+            n_bins=n_bins, 
+            encode='ordinal', 
+            strategy=discretization_type,
+        )
+        df_data[f'{col}_cat'] = discretizer.fit_transform(df_data[[col]]).astype(int)
+        if drop_original_col:
+            df_data = df_data.drop(columns=[col])
+        return df_data, f'{col}_cat'
+
 
 def encode_col(col):
     col = col.astype(str)
@@ -58,7 +71,7 @@ def encode_col(col):
 
 
 def trx_to_features(df_data, print_dataset_info,
-                    col_client_id, cols_event_time, cols_category, cols_log_norm):
+                    col_client_id, cols_event_time, cols_category, cols_discretize, cols_log_norm):
     def copy_time(rec):
         rec['event_time'] = rec['feature_arrays']['event_time']
         del rec['feature_arrays']['event_time']
@@ -112,6 +125,14 @@ def trx_to_features(df_data, print_dataset_info,
             raise NotImplementedError(f'Unknown type of data transformation: "{cols_event_time[0]}"')
     else:
         df_data = _td_default(df_data, cols_event_time)
+    
+    for col in cols_discretize:
+        n_bins = int(col.split('#')[-1])
+        discretization_type = col.split('#')[0].split(':')[-1]
+        col = col.split(':')[0]
+        drop_original_col = col not in cols_log_norm
+        df_data, disc_col_name = discretize_col(df_data, col, discretization_type, n_bins, drop_original_col)
+        cols_category.append(disc_col_name)
 
     for col in cols_category:
         df_data[col] = encode_col(df_data[col])
@@ -220,6 +241,7 @@ if __name__ == '__main__':
         col_client_id=config.col_client_id,
         cols_event_time=config.cols_event_time,
         cols_category=config.cols_category,
+        cols_discretize=config.cols_discretize,
         cols_log_norm=config.cols_log_norm,
     )
 

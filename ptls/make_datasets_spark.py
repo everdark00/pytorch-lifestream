@@ -75,7 +75,7 @@ class DatasetConverter:
                                    'second common value will be replaced with 2 etc.')
         parser.add_argument('--cols_discretize', nargs='*', default=[],
                             help = 'List of columns to apply discretization to. '\
-                                   'In current version "kmeans" and "quantile" discretization types are supported. '\
+                                   '"kmeans" and "quantile" discretization types are supported. '\
                                    'Columns for discritization must be passed in following format: '\
                                    '<column_name>:<discretization type>#<discretization frequency>')
         parser.add_argument('--cols_log_norm', nargs='*', default=[],
@@ -288,34 +288,34 @@ class DatasetConverter:
         logger.info(f'Join with "{path}" done. New {col_counter} columns joined')
         return df
 
-    def discretize_col(self, df, col_name, discretization_type, n_bins):
+    def discretize_col(self, df, col_name, discretization_type, n_bins, drop_original_col):
+        df = df.withColumn(col_name, F.col(col_name).cast('float'))
+        discretized_col_name = f'{col_name}_cat'
         if discretization_type == 'quantile':
-            from pdb import set_trace
-            print(df.printSchema())
             discretizer = QuantileDiscretizer(
                 numBuckets=n_bins,
                 inputCol=col_name,
-                outputCol=f'{col_name}_cat',
+                outputCol=discretized_col_name,
                 handleInvalid="skip"
             )
 
             df = discretizer.fit(df).transform(df)
-            df = df.withColumn(col_name, f'{col_name}_cat' + 1).drop(f'{col_name}_cat')
         elif discretization_type == 'kmeans':
-            va = VectorAssembler(inputCols=[col_name], outputCol=col_name)
+            va = VectorAssembler(inputCols=[col_name], outputCol=f'{col_name}_wrapped')
             df = va.transform(df)
             discretizer = KMeans(
                 k=n_bins, 
-                featuresCol=col_name, 
-                predictionCol=f'{col_name}_cat',
+                featuresCol=f'{col_name}_wrapped', 
+                predictionCol=discretized_col_name,
                 seed=42,                 
             )
 
-            df = discretizer.fit(df).transform(df)
-            df = df.withColumn(col_name, f'{col_name}_cat' + 1).drop(f'{col_name}_cat')
+            df = discretizer.fit(df).transform(df).drop(f'{col_name}_wrapped')
         else:
             raise NotImplementedError(f'Unknown type of discretization: "{discretization_type}"')
-        return df
+        if drop_original_col:
+            df = df.drop(col_name)
+        return df, discretized_col_name
 
     def trx_to_features(self, df_data, print_dataset_info: bool,
                         col_client_id, cols_event_time, cols_category, cols_discretize, cols_log_norm, max_trx_count: int):
@@ -323,17 +323,18 @@ class DatasetConverter:
             unique_clients = df_data.select(col_client_id).distinct().count()
             logger.info(f'Found {unique_clients} unique clients')
 
-        for col in cols_log_norm:
-            df_data = self.log_transform(df_data, col)
-            if print_dataset_info:
-                logger.info(f'Encoder stat for "{col}":\ncodes | trx_count\n{self.pd_hist(df_data, col)}')
-
         for col in cols_discretize:
             n_bins = int(col.split('#')[-1])
             discretization_type = col.split('#')[0].split(':')[-1]
             col = col.split(':')[0]
-            df_data = self.discretize_col(df_data, col, discretization_type, n_bins)
-#            cols_category.append(col)
+            drop_original_col = col not in cols_log_norm
+            df_data, disc_col_name = self.discretize_col(df_data, col, discretization_type, n_bins, drop_original_col)
+            cols_category.append(disc_col_name)
+
+        for col in cols_log_norm:
+            df_data = self.log_transform(df_data, col)
+            if print_dataset_info:
+                logger.info(f'Encoder stat for "{col}":\ncodes | trx_count\n{self.pd_hist(df_data, col)}')
 
         encoders = {col: self.get_encoder(df_data, col) for col in cols_category}
         for col in cols_category:

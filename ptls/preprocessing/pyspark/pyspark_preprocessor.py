@@ -116,11 +116,12 @@ class PysparkDataPreprocessor(DataPreprocessor):
                     f"incorrect category_transformation: "
                     f'`category_transformation` = "{category_transformation}"'
                 )
+            drop_numeric_col = (col not in cols_numerical) and (col not in cols_identity)
             cts_category.append(
                 ColNumericDiscretizer(
                     col_name_original=col,
                     col_name_target=col_name_target,
-                    is_drop_original_col = (col not in cols_numerical),
+                    is_drop_original_col = drop_numeric_col,
                     discr_type=disc_params[0],
                     n_bins=disc_params[1],
                     categorical_transformation=sub_ct_category

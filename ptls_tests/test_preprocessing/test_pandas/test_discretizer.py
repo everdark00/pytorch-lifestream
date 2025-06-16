@@ -44,7 +44,7 @@ def test_add_replace_col():
     assert 'num_value_cat' in processed[0], f"Discretized column expected in preprocessed data but not found"
 
 def test_distribution():
-    for discr_type in ['quantile', 'kmeans']
+    for discr_type in ['kmeans', 'quantile']:
         np.random.seed(42)
         num_rows = 10000
         df = pd.DataFrame({
@@ -58,7 +58,7 @@ def test_distribution():
                 col_id='id',
                 col_event_time='event_dt',
                 event_time_transformation='none',
-                category_transformation = 'none',
+                category_transformation = 'frequency',
                 cols_discretize={'num_value' : (discr_type,  n_bins_discr)},
                 return_records=True,
             )
@@ -68,13 +68,10 @@ def test_distribution():
         kbins = KBinsDiscretizer(n_bins=n_bins_discr, encode='ordinal', strategy=discr_type)
         sklearn_cats = kbins.fit_transform(df[['num_value']]).astype(int).flatten()
 
-        preproc_counts = np.bincount(preproc_cats, minlength=n_bins_discr)
-        sklearn_counts = np.bincount(sklearn_cats, minlength=n_bins_discr)
+        preproc_counts = np.bincount(preproc_cats - 1, minlength=n_bins_discr)
+        sklearn_counts = sorted(np.bincount(sklearn_cats, minlength=n_bins_discr))[::-1]
 
         stat, p_value = chisquare(f_obs=preproc_counts, f_exp=sklearn_counts)
         print(f"Discretization {discr_type}: chi-square p-value is {p_value:.5f}")
 
         assert p_value > 0.05, f"Discretization {discr_type}: distributions differ significantly (p={p_value:.5f})"
-
-def test_mapping():
-    pass

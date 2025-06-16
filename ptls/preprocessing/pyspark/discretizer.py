@@ -33,14 +33,14 @@ class ColNumericDiscretizer(ColTransformerPysparkMixin, ColCategoryTransformer):
         if self.discr_type == 'quantile':
             self.discretizer = QuantileDiscretizer(
                 numBuckets=n_bins,
-                inputCol=self.col_name_target,
+                inputCol=self.col_name_original,
                 outputCol=self.col_name_target,
                 handleInvalid="skip"
             )
         elif self.discr_type == 'kmeans':
             self.discretizer = KMeans(
                 k=self.n_bins, 
-                featuresCol=self.col_name_target, 
+                featuresCol=f'{self.col_name_original}_wrapped', 
                 predictionCol=self.col_name_target,
                 seed=42,                 
             )
@@ -50,29 +50,31 @@ class ColNumericDiscretizer(ColTransformerPysparkMixin, ColCategoryTransformer):
                     f'`discr_type` = "{self.discr_type}" '
                 )
 
+        self.fitted_discretizer = None
+
     def get_col(self, x: pyspark.sql.DataFrame):
-        return x.withColumn(
-            self.col_name_target,
-            F.col(self.col_name_original),
-        )
+        if self.discr_type == 'kmeans':
+            va = VectorAssembler(inputCols=[self.col_name_original], outputCol=f'{self.col_name_original}_wrapped')
+            x = va.transform(x)
+        return x
 
     def fit(self, x: pyspark.sql.DataFrame):
         super().fit(x)
-
         df = self.get_col(x)
 
-        if self.discr_type == 'kmeans':
-            va = VectorAssembler(inputCols=[self.col_name_target], outputCol=self.col_name_target)
-            df = va.transform(df)
-
-        self.discretizer.fit(df)
-        self.cat_transformer.fit(self.discretizer.transform(x.select(self.col_name_target)))
-
+        self.fitted_discretizer = self.discretizer.fit(df)
+        self.cat_transformer.fit(self.fitted_discretizer.transform(df))
         return self
 
     def transform(self, x: pyspark.sql.DataFrame):
         df = self.get_col(x)
 
-        df = self.cat_transformer.transform(self.discretizer.transform(df))
+        if self.fitted_discretizer is None:
+             raise RuntimeError(
+                    f"Discretizer instance must be fit before applying transformation!"
+                )           
+        df = self.cat_transformer.transform(self.fitted_discretizer.transform(df))
+        if self.discr_type == 'kmeans':
+            df = df.drop(f'{self.col_name_original}_wrapped')
         df = super().transform(df)
         return df

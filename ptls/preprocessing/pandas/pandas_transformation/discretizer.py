@@ -37,7 +37,7 @@ class ColNumericDiscretizer(ColCategoryTransformer):
             n_bins=self.n_bins, 
             encode='ordinal', 
             strategy=self.discr_type,
-            quantile_method='averaged_inverted_cdf'
+ #           quantile_method='averaged_inverted_cdf'
         )
     
     def __repr__(self):
@@ -58,7 +58,7 @@ class ColNumericDiscretizer(ColCategoryTransformer):
     def transform(self, x: pd.DataFrame):
         x = self.attach_column(x, x[self.col_name_original].rename(self.col_name_target))
         x[self.col_name_target] = self.cat_transformer.transform(
-            pd.DataFrame(self.discretizer.transform(x.loc[:, [self.col_name_target]]).astype('int'),
+            pd.DataFrame(self.discretizer.transform(x[[self.col_name_target]]).astype('int'),
                          columns=[self.col_name_target]
             )
         )
